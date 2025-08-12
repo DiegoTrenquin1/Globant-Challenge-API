@@ -1,0 +1,21 @@
+# Entorno virtual
+env/
+venv/
+
+# Archivos bytecode y cachés
+__pycache__/
+*.pyc
+*.pyo
+
+# Archivos de logs
+*.log
+
+# Carpetas creadas por editores o IDEs
+.vscode/
+.idea/
+
+# Archivos de configuración local
+.env
+
+# Otros archivos temporales
+*.swp
