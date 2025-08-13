@@ -1,50 +1,103 @@
-from fastapi import FastAPI, HTTPException, Depends
-from pydantic import BaseModel
+import math
+from fastapi import FastAPI, HTTPException, UploadFile, File
 import models
 from database import engine, SessionLocal
-from sqlalchemy.orm import Session
 import crud
-from utils import *
-import pandas as pd 
+import pandas as pd
+import os
 
 app = FastAPI()
 
+models.Base.metadata.drop_all(bind=engine)
 models.Base.metadata.create_all(bind=engine)
-table_names = ["departments", "jobs", "employees"]
+
+table_names = ["departments", "jobs", "hired_employees"]
+BATCH_SIZE = 1000  # Tamaño máximo por lote
 
 @app.post('/data/{table_name}')
-
-
-def upload_data(table_name: str):
+async def upload_csv(table_name: str, file: UploadFile = File(...)):
     db = SessionLocal()
-    print(f"Leyendo el archivo CSV para la tabla {table_name}...")
+    temp_path = None
+    total_inserted = 0
     try:
-        data = read_csv(f"data/{table_name}.csv").to_dict(orient="records")
-        print("tabla:",table_name," leida")
-        if len(data) > 1000:
-            return {"error": "Max 1000 rows per upload"}
+        if table_name not in table_names:
+            raise HTTPException(status_code=400, detail="La tabla no existe")
 
+        # Guardar archivo temporalmente
+        temp_path = f"temp_{file.filename}"
+        with open(temp_path, "wb") as buffer:
+            buffer.write(await file.read())
+
+        # Leer CSV
+        df = pd.read_csv(temp_path, header=None)
+
+        # Asignar columnas y procesar datos según la tabla
         if table_name == "departments":
-            data_update = pd.read_csv(f"data/{table_name}.csv", header=None, names=["id_department", "name_department"]).to_dict(orient="records")
-            crud.upsert_departments(db, data_update)
-            print("Inserto datos en la tabla deparments")
-            
+            df.columns = ["id_department", "name_department"]
+            upsert_fn = crud.upsert_departments
+
         elif table_name == "jobs":
-            data_update = pd.read_csv(f"data/{table_name}.csv", header=None, names=["id_job", "title_job"]).to_dict(orient="records")
-            crud.upsert_jobs(db, data_update)
-            print("Inserto datos en la tabla jobs")
+            df.columns = ["id_job", "title_job"]
+            upsert_fn = crud.upsert_jobs
 
-        elif table_name == "employees":
-            data_update = pd.read_csv(f"data/{table_name}.csv", header=None, names=["id_employee", "name_employee","deparment_id","job_id"]).to_dict(orient="records")
-            crud.insert_employees(db, data_update)
-            print("Inserto datos en la tabla employee")
+        elif table_name == "hired_employees":
+            df.columns = ["id_employee", "name_employee", "date_time", "department_id", "job_id"]
+            #Convertir a datetime, forzando errores a NaT
+            df["date_time"] = pd.to_datetime(df["date_time"], errors="coerce")
 
-        else:
-            return {"error": "La tabla no existe"}
-        return {"message": f"Inserted {len(data)} records into {table_name}"}
+            # Reemplazar NaT con None
+            df["date_time"] = df["date_time"].apply(lambda x: x if pd.notnull(x) else None)
+            df["date_time"] = pd.to_datetime(df["date_time"], errors="coerce", utc=False)
+
+            # Reemplazar todos los NaT por None
+            df["date_time"] = df["date_time"].where(pd.notnull(df["date_time"]), None)
+
+
+            upsert_fn = crud.upsert_employees
+
+
+
+            records = []
+            for row in df.to_dict(orient="records"):
+                # date_time
+                if pd.isna(row["date_time"]):
+                    row["date_time"] = None
+                else:
+                    row["date_time"] = row["date_time"].to_pydatetime()
+                
+                # IDs seguros para BIGINT
+                for col in ["id_employee", "department_id", "job_id"]:
+                    val = row[col]
+                    if pd.isna(val) or str(val).strip() == "" or str(val) == "nan":
+                        row[col] = None
+                    else:
+                        try:
+                            x_int = int(float(val))
+                            row[col] = x_int
+                        except:
+                            row[col] = None
+                
+                records.append(row)
+
+
+        # Inserción en lotes usando records limpios
+        for start in range(0, len(records), BATCH_SIZE):
+            batch = records[start:start + BATCH_SIZE]
+            try:
+                upsert_fn(db, batch)
+                total_inserted += len(batch)
+            except Exception as e:
+                db.rollback()
+                print(f"Error insertando batch: {e}")
+                continue
+
+        return {"message": f"Inserted {total_inserted} records into {table_name}"}
+
     except FileNotFoundError:
-        print("No se encontro el archivo")
+        raise HTTPException(status_code=404, detail="Archivo CSV no encontrado")
     except Exception as e:
-        print("Error al procesar",e)
-
-
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
+        db.close()

@@ -17,7 +17,8 @@ class Job(Base):
 
 class Employee(Base):
     __tablename__='Employee'
-    id_employee=Column(Integer, primary_key=True)
+    id_employee=Column(BigInteger, primary_key=True)
     name_employee= Column(String(255))
-    department_id=Column(Integer)
-    job_id= Column(Integer)
+    date_time=Column(DateTime)
+    department_id=Column(BigInteger)
+    job_id= Column(BigInteger)
