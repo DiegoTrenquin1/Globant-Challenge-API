@@ -8,7 +8,7 @@ import os
 
 app = FastAPI()
 
-models.Base.metadata.drop_all(bind=engine)
+#models.Base.metadata.drop_all(bind=engine)
 models.Base.metadata.create_all(bind=engine)
 
 table_names = ["departments", "jobs", "hired_employees"]
@@ -22,8 +22,7 @@ async def upload_csv(table_name: str, file: UploadFile = File(...)):
     try:
         if table_name not in table_names:
             raise HTTPException(status_code=400, detail="La tabla no existe")
-
-        # Guardar archivo temporalmente
+        
         temp_path = f"temp_{file.filename}"
         with open(temp_path, "wb") as buffer:
             buffer.write(await file.read())
@@ -35,11 +34,14 @@ async def upload_csv(table_name: str, file: UploadFile = File(...)):
         if table_name == "departments":
             df.columns = ["id_department", "name_department"]
             upsert_fn = crud.upsert_departments
+            records = df.to_dict(orient="records")
 
         elif table_name == "jobs":
             df.columns = ["id_job", "title_job"]
             upsert_fn = crud.upsert_jobs
-
+            records = df.to_dict(orient="records")
+            
+        ##Para esta tabla aplico ciertas transformaciones debido a que vienen nulos y datos con problemas 
         elif table_name == "hired_employees":
             df.columns = ["id_employee", "name_employee", "date_time", "department_id", "job_id"]
             #Convertir a datetime, forzando errores a NaT
@@ -54,8 +56,6 @@ async def upload_csv(table_name: str, file: UploadFile = File(...)):
 
 
             upsert_fn = crud.upsert_employees
-
-
 
             records = []
             for row in df.to_dict(orient="records"):
