@@ -24,5 +24,15 @@ services:
     depends_on:
       - postgres
 
+  api:
+    build: .
+    container_name: fastapi_app
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+    environment:
+      DATABASE_URL: postgresql://db_admin:GlobantTest@2025.@postgres:5432/mi_base
+
 volumes:
   postgres_data:
